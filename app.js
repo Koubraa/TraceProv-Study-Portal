@@ -31,7 +31,7 @@ function renderGraph() {
   const graph = state.current.graph; const question = currentCase().questions.find((q) => q.id === state.question); const selected = new Set([...(question?.highlight_edges || []), ...(answer(question?.id || "").evidence || [])]);
   $("hint").textContent = `Evidence for ${question?.id || "question"}. Click an edge to add or remove reviewer evidence.`; if (state.cy) state.cy.destroy();
   const elements = [...graph.nodes.map((node) => ({ data:{ id:node.node_id,label:node.component_name || node.tool_name || node.node_type || node.node_id,kind:node.node_type } })), ...graph.edges.map((edge) => ({ data:{ id:edge.edge_id,source:edge.src_node_id,target:edge.dst_node_id,label:edge.edge_id,detail:edge,selected:selected.has(edge.edge_id),cited:question?.highlight_edges.includes(edge.edge_id) } }))];
-  state.cy = cytoscape({ container:$("graph"), elements, layout:{name:"dagre",rankDir:"LR",padding:24,nodeSep:34,rankSep:55}, wheelSensitivity:.18, style:[{selector:"node",style:{label:"data(label)","font-size":10,"text-wrap":"wrap","text-max-width":"85px",color:"#10233d","background-color":"#dbeafe","border-width":1,"border-color":"#78a5dd",width:42,height:42}},{selector:"node[kind = 'Tool']",style:{"background-color":"#d1fae5","border-color":"#40a67b"}},{selector:"edge",style:{label:"data(label)",width:1.5,"line-color":"#9aa9ba","target-arrow-color":"#9aa9ba","target-arrow-shape":"triangle","curve-style":"bezier","font-size":8,color:"#66768a","text-background-color":"#fff","text-background-opacity":1}},{selector:"edge[cited]",style:{"line-color":"#1468d4","target-arrow-color":"#1468d4"}},{selector:"edge[selected]",style:{width:4,"line-color":"#e07800","target-arrow-color":"#e07800",color:"#9b5700","font-weight":"bold"}}] });
+  state.cy = cytoscape({ container:$("graph"), elements, layout:{name:"dagre",rankDir:"LR",padding:24,nodeSep:34,rankSep:55}, style:[{selector:"node",style:{label:"data(label)","font-size":10,"text-wrap":"wrap","text-max-width":"85px",color:"#10233d","background-color":"#dbeafe","border-width":1,"border-color":"#78a5dd",width:42,height:42}},{selector:"node[kind = 'Tool']",style:{"background-color":"#d1fae5","border-color":"#40a67b"}},{selector:"edge",style:{label:"data(label)",width:1.5,"line-color":"#9aa9ba","target-arrow-color":"#9aa9ba","target-arrow-shape":"triangle","curve-style":"bezier","font-size":8,color:"#66768a","text-background-color":"#fff","text-background-opacity":1}},{selector:"edge[cited]",style:{"line-color":"#1468d4","target-arrow-color":"#1468d4"}},{selector:"edge[selected]",style:{width:4,"line-color":"#e07800","target-arrow-color":"#e07800",color:"#9b5700","font-weight":"bold"}}] });
   state.cy.on("tap", "edge", (event) => { const edge = event.target.data("detail"), a = answer(state.question), evidence = new Set(a.evidence || []); evidence.has(edge.edge_id) ? evidence.delete(edge.edge_id) : evidence.add(edge.edge_id); annotation().questions[state.question] = { ...a, evidence:[...evidence] }; $("detail").textContent = JSON.stringify(edge, null, 2); saveDrafts(); renderCards(); renderGraph(); });
   state.cy.on("tap", "node", (event) => { $("detail").textContent = JSON.stringify(event.target.data(), null, 2); });
 }
@@ -40,7 +40,23 @@ async function loadCase(index) { state.caseIndex = index; const caseId = state.a
 async function login(event) {
   event.preventDefault(); $("loginError").textContent = ""; const username = $("username").value.trim().toLowerCase(); const account = (window.TRACEPROV_STUDY_ACCOUNTS || []).find((item) => item.username === username);
   if (!account || await sha256($("password").value) !== account.password_sha256) { $("loginError").textContent = "Invalid study username or password."; return; }
-  state.account = account; state.drafts = JSON.parse(sessionStorage.getItem(`traceprov-drafts:${username}`) || "{}"); state.data = await fetch("data/cases.json").then((response) => response.json()); $("userName").textContent = username; $("loginView").hidden = true; $("appView").hidden = false; await loadCase(0);
+  try {
+    state.account = account;
+    state.drafts = JSON.parse(sessionStorage.getItem(`traceprov-drafts:${username}`) || "{}");
+    const response = await fetch("data/cases.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`case manifest returned HTTP ${response.status}`);
+    state.data = await response.json();
+    $("userName").textContent = username;
+    $("loginView").hidden = true;
+    $("appView").hidden = false;
+    await loadCase(0);
+  } catch (error) {
+    console.error("TraceProv login failed", error);
+    state.account = null;
+    $("loginView").hidden = false;
+    $("appView").hidden = true;
+    $("loginError").textContent = `Could not load your assigned cases: ${error.message}`;
+  }
 }
 function submitToGoogleForm() {
   const fields = cfg.googleFormFields || {}; const endpoint = cfg.googleFormResponseUrl || "";

@@ -1,0 +1,3 @@
+# Never add plaintext study accounts or local exports to the public Pages repository.
+*credentials*.csv
+annotations-export.*

@@ -1,0 +1,60 @@
+name: Collect TraceProv annotations
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  collect:
+    if: startsWith(github.event.issue.title, '[TraceProv]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract annotation payload
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const body = process.env.ISSUE_BODY || '';
+          const match = body.match(/<!-- traceprov-annotation\s*\n([\s\S]*?)\n-->/);
+          if (!match) throw new Error('No TraceProv payload found in issue body.');
+          const annotation = JSON.parse(match[1]);
+          const reviewer = String(annotation.reviewer_id || '').toLowerCase();
+          const issueAuthor = String(process.env.ISSUE_AUTHOR || '').toLowerCase();
+          if (!reviewer || reviewer !== issueAuthor) {
+            throw new Error('The submitted reviewer_id must match the GitHub account that opened the issue.');
+          }
+          const assignments = JSON.parse(fs.readFileSync('assignments.json', 'utf8'));
+          const assignedCases = assignments[reviewer];
+          if (!Array.isArray(assignedCases) || !assignedCases.includes(annotation.case_id)) {
+            throw new Error('This case is not assigned to the submitting GitHub account.');
+          }
+          const answers = Object.values(annotation.questions || {});
+          if (answers.length !== 16 || answers.some((answer) => !answer.verdict)) {
+            throw new Error('A complete TraceProv annotation must contain verdicts for all 16 questions.');
+          }
+          annotation.github_issue = Number(process.env.ISSUE_NUMBER);
+          fs.mkdirSync('annotations', { recursive: true });
+          const duplicate = fs.readdirSync('annotations').some((file) => {
+            try {
+              const prior = JSON.parse(fs.readFileSync(`annotations/${file}`, 'utf8'));
+              return prior.case_id === annotation.case_id && String(prior.reviewer_id || '').toLowerCase() === reviewer;
+            } catch (_) { return false; }
+          });
+          if (duplicate) throw new Error('A submission already exists for this reviewer and case.');
+          fs.writeFileSync(`annotations/issue-${process.env.ISSUE_NUMBER}.json`, JSON.stringify(annotation, null, 2) + '\n');
+          NODE
+      - name: Commit annotation
+        run: |
+          git config user.name "traceprov-annotation-bot"
+          git config user.email "traceprov-annotation-bot@users.noreply.github.com"
+          git add annotations
+          git diff --cached --quiet || git commit -m "Collect TraceProv annotation #${{ github.event.issue.number }}"
+          git push
